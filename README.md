@@ -22,8 +22,6 @@
 
  You should have received a copy of the GNU General Public License
  along with this program. If not, see http://www.gnu.org/licenses/.
-
- @author-current: Jerry Elmore <jerry.r.elmore@silverfox.email>
  
  @authors-original: Fabio Perrella and Thiago Coutinho (Locaweb)
 
