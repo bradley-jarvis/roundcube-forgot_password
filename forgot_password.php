@@ -4,11 +4,11 @@
  *
  * Plugin to reset an account password
  *
- * @version 1.1
+ * @version 1.2
  * @original_author Fabio Perrella and Thiago Coutinho (Locaweb)
  * Contributing Author: Jerry Elmore
- 
- * @url https://github.com/jerryrelmore/roundcube-forgot_password
+ * Edited for own purposes by: Samoilov Yuri
+ * @url https://github.com/drlight/roundcube-forgot_password
  */
 class forgot_password extends rcube_plugin
 {
@@ -58,9 +58,10 @@ class forgot_password extends rcube_plugin
 		$userrec = $rcmail->db->fetch_assoc($sql_result);
 
 		//add input alternative_email. I didn't use include_script because I need to concatenate $userrec['alternative_email']
+// samoilov 02.05.2019 
 		$js = '$(document).ready(function($){' .
-		'$("#password-form table").prepend(\'<tr><td class="title"><label for="alternative_email">Alternate Email Address:</label></td>' .
-		'<td><input type="text" autocomplete="off" size="20" id="alternative_email" name="_alternative_email" value="' . $userrec['alternative_email'] . '"></td></tr>\');' .
+		'$("#password-form table :first").prepend(\'<tr class="alternative_email"><td class="title"><label for="alternative_email">Дополнительный email (для восстановления пароля):</label></td>' .
+		'<td><input type="text" autocomplete="off" size="20" id="alternative_email"  name="_alternative_email" value="' . $userrec['alternative_email'] . '"></td></tr>\');' .
 		'form_action = $("#password-form").attr("action");' .
 		'form_action = form_action.replace("plugin.password-save","plugin.password-save-forgot_password");' .
 		'$("#password-form").attr("action",form_action);' .
@@ -77,6 +78,7 @@ class forgot_password extends rcube_plugin
 
 		if(preg_match('/.+@[^.]+\..+/Umi',$alternative_email)) {
 			$rcmail->db->query("REPLACE INTO forgot_password(alternative_email, user_id) values(?,?)",$alternative_email,$rcmail->user->ID);
+			
 			$message = $this->gettext('alternative_email_updated','forgot_password');
 			$rcmail->output->command('display_message', $message, 'confirmation');
 		}
@@ -84,7 +86,7 @@ class forgot_password extends rcube_plugin
 			$message = $this->gettext('alternative_email_invalid','forgot_password');
 			$rcmail->output->command('display_message', $message, 'error');
 		}
-
+//samoilov 02.05.2019 code below needs 
 		$password_plugin = new password($this->api);
 		if($_REQUEST['_curpasswd'] || $_REQUEST['_newpasswd'] || $_REQUEST['_confpasswd']) {
 	  	$password_plugin->password_save();
@@ -95,6 +97,8 @@ class forgot_password extends rcube_plugin
 	    $this->register_handler('plugin.body', array($password_plugin, 'password_form'));
 			$rcmail->overwrite_action('plugin.password');
 			$rcmail->output->send('plugin');
+	    //$rcmail->output->send('plugin.password');
+
 		}
   }
 
@@ -106,10 +110,11 @@ class forgot_password extends rcube_plugin
   	if(!$userrec['alternative_email'] && !isset($_SESSION['show_warning_alternative_email'])){
 
 		// JRE - SET THIS a href TO THE URL FOR YOUR RC login screen, e.g. https://your.domain.com/login
-		$link = "<a href='/login/?_task=settings&_action=plugin.password'>". $this->gettext('click_here','forgot_password') ."</a>";
+		$link = "<a href='/?_task=settings&_action=plugin.password'>". $this->gettext('click_here','forgot_password') ."</a>";
 	  	$message = sprintf($this->gettext('notice_no_alternative_email_warning','forgot_password'),$link);
 	  	$rcmail->output->command('display_message', $message, 'notice');
-	  	$_SESSION['show_warning_alternative_email'] = false;
+//samoilov 29.04.2019 comment line below to force warning of no alt email configured
+	  	$_SESSION['show_warning_alternative_email'] = true;
   	}
   }
 
@@ -122,25 +127,47 @@ class forgot_password extends rcube_plugin
     $new_password = rcube_utils::get_input_value('_new_password',rcube_utils::INPUT_POST);
     $new_password_confirmation = rcube_utils::get_input_value('_new_password_confirmation',rcube_utils::INPUT_POST);
     $token = rcube_utils::get_input_value('_t',rcube_utils::INPUT_POST);
+// samoilov 28.04.2019 change sql query for update password
+		
     if($new_password && $new_password == $new_password_confirmation){
-			$rcmail->db->query("UPDATE ".$rcmail->db->table_name('rcube_users', true).      // JRE - You will need to adjust table name to whatever table name you use for your users in roundcubedb
+/*			$rcmail->db->query("UPDATE ".$rcmail->db->table_name('users', true).      // JRE - You will need to adjust table name to whatever table name you use for your users in roundcubedb
 					" SET password=? " .
 					" WHERE user_id=(SELECT user_id FROM forgot_password WHERE token=?)",
-					array($rcmail->encrypt($new_password), $token));
+					array($rcmail->encrypt($new_password), $token));*/
+					
+// samoilov 30.04.2019 $new_password check for weakness below
+		    // Validate password strength
+		    $uppercase = preg_match('@[A-Z]@', $new_password);
+		    $lowercase = preg_match('@[a-z]@', $new_password);
+		    $number    = preg_match('@[0-9]@', $new_password);
+		    $specialChars = preg_match('/[!|@|#|$|%|^|&|*|_|(|)]/', $new_password);
+		    if(!$uppercase || !$lowercase || !$number || !$specialChars || strlen($new_password) < 7) {
+			$message = $this->gettext('password_weakness_check_failed','forgot_password');
+			$type = 'error';
+			$rcmail->output->command('display_message', $message, $type);
+			$rcmail->output->send('forgot_password.new_password_form');
+		    } else {
+			$rcmail->db->query("UPDATE `mail`.`auth` SET `passwd`=? " ." WHERE `login`=(SELECT SUBSTRING_INDEX(`username`, '@', 1) FROM `forgot_password` JOIN `users` ON (`forgot_password`.`user_id`=`users`.`user_id`) WHERE token=?)",
+					array($new_password, $token));
 
 			if($rcmail->db->affected_rows()==1){
 				$rcmail->db->query("UPDATE forgot_password set token=null, token_expiration=null WHERE token=?",$token);
 
 				$message = $this->gettext('password_changed','forgot_password');
 				$type = 'confirmation';
+				$rcmail->output->command('display_message', $message, $type);
+				$rcmail->output->send('login');
 			}
 			else{
 				$message = $this->gettext('password_not_changed','forgot_password');
 				$type = 'error';
+				$rcmail->output->command('display_message', $message, $type);
+				$rcmail->output->send('login');
 			}
-
-    	$rcmail->output->command('display_message', $message, $type);
+		    }
+/*    	$rcmail->output->command('display_message', $message, $type);
 	    $rcmail->output->send('login');
+	    $rcmail->output->send('forgot_password.new_password_form');*/
     }
     else{
     	$message = $this->gettext('password_confirmation_invalid','forgot_password');
@@ -154,7 +181,8 @@ class forgot_password extends rcube_plugin
       return $a;
 
   	$rcmail = rcmail::get_instance();
-  	$sql_result = $rcmail->db->query("SELECT * FROM ".$rcmail->db->table_name('rcube_users', true)." u " .      // JRE - You will need to adjust table name to whatever table name you use for your users in roundcubedb
+	
+  	$sql_result = $rcmail->db->query("SELECT * FROM ".$rcmail->db->table_name('users', true)." u " .      // JRE - You will need to adjust table name to whatever table name you use for your users in roundcubedb
       																" INNER JOIN forgot_password fp on u.user_id = fp.user_id " .
       																" WHERE fp.token=? and token_expiration >= now()", rcube_utils::get_input_value('_t',rcube_utils::INPUT_GET));
 		$userrec = $rcmail->db->fetch_assoc($sql_result);
@@ -182,12 +210,19 @@ class forgot_password extends rcube_plugin
     $rcmail = rcmail::get_instance();
 
 		//user must be user@domain
+//samoilov 28.04.2019 fix of domain in login and existence of user check
     $user = trim(urldecode($_GET['_username']));
-
+    
+    if (strpos($user,'@')===false) {
+	$user=$user.'@arcticsu.ru';
+    }
     if($user) {
-      // get user row
+    $sql_result = $rcmail->db->query("SELECT user_id FROM ".$rcmail->db->table_name('users', true)."WHERE  username=?", $user);
+    $userrec = $rcmail->db->fetch_assoc($sql_result);
+    if ($userrec['user_id']!='') { 
+//    echo '<script>console.log("'.$userrec['user_id'].'")</script>';
       $sql_result = $rcmail->db->query("SELECT u.user_id, fp.alternative_email, fp.token_expiration, fp.token_expiration < now() as token_expired " .
-      																"	FROM ".$rcmail->db->table_name('rcube_users', true)." u " .      // JRE - You will need to adjust table name to whatever table name you use for your users in roundcubedb
+      																"	FROM ".$rcmail->db->table_name('users', true)." u " .      // JRE - You will need to adjust table name to whatever table name you use for your users in roundcubedb
       																" INNER JOIN forgot_password fp on u.user_id = fp.user_id " .
       																" WHERE  u.username=?", $user);
       $userrec = $rcmail->db->fetch_assoc($sql_result);
@@ -197,6 +232,7 @@ class forgot_password extends rcube_plugin
       	if($userrec['token_expiration'] && !$userrec['token_expired']) {
       		$message = $this->gettext('checkaccount','forgot_password');
 	        $type = 'confirmation';
+		
       	}
       	else {
 					if($this->send_email_with_token($userrec['user_id'], $userrec['alternative_email'])) {
@@ -214,9 +250,13 @@ class forgot_password extends rcube_plugin
       	$message = $this->gettext('senttoadmin','forgot_password');
 	      $type = 'notice';
       }
+    } else {
+	$message = $this->gettext('forgot_passwordusernotfound','forgot_password');
+	$type = 'error';
+    }
     }
     else {
-      $message = $this->gettext('userempty','forgot_password');
+      $message = $this->gettext('forgot_passworduserempty','forgot_password');
       $type = 'error';
     }
 
@@ -270,14 +310,15 @@ class forgot_password extends rcube_plugin
 
 		$file = dirname(__FILE__)."/localization/{$rcmail->user->language}/reset_pw_body.html";
 		// The 'login' portion of the link is OPTIONAL and only required if that's the default login screen for your RC installation.
-		$link = "http://{$_SERVER['SERVER_NAME']}/login/?_task=settings&_action=plugin.new_password_form&_t=$token";
+		$link = "http://{$_SERVER['SERVER_NAME']}/?_task=settings&_action=plugin.new_password_form&_t=$token";
 		$body = strtr(file_get_contents($file), array('[LINK]' => $link));
 		$subject = $rcmail->gettext('email_subject','forgot_password');
-
+//		echo '<script>console.log("'.$alternative_email.'")</script>';
 		return $this->send_html_and_text_email(
 																		$alternative_email,
 																		//$this->get_from_email($alternative_email),
-																		$this->get_from_email($rcmail->config->get('admin_email')),
+																		//$this->get_from_email($rcmail->config->get('admin_email')),
+																		$this->get_from_email($rcmail->config->get('default_smtp_user')),
 																		$subject,
 																		$body
 																		);
@@ -285,10 +326,12 @@ class forgot_password extends rcube_plugin
 
 	private function send_alert_to_admin($user_requesting_new_password) {
 		$rcmail = rcmail::get_instance();
-		$file = dirname(__FILE__)."/localization/{$rcmail->user->language}/reset_pw_body.html";
+//samoilov 28.04.2019 fix of admin alert body
+//		$file = dirname(__FILE__)."/localization/{$rcmail->user->language}/reset_pw_body.html";
+		$file = dirname(__FILE__)."/localization/{$rcmail->user->language}/alert_for_admin_to_reset_pw.html";
 		$body = strtr(file_get_contents($file), array('[USER]' => $user_requesting_new_password));
 		$subject = $rcmail->gettext('admin_alert_email_subject','forgot_password');
-
+		//echo '<script>console.log("'.$subject.'")</script>';
 		return $this->send_html_and_text_email(
 																		$rcmail->config->get('admin_email'),
 																		$this->get_from_email($user_requesting_new_password),
@@ -299,7 +342,9 @@ class forgot_password extends rcube_plugin
 
 	private function get_from_email($email) {
 		$parts = explode('@',$email);
-		return 'no-reply@'.$parts[1];
+//samoilov 29.04.2019 fix of 'from:' field
+//		return 'no-reply@'.$parts[1];
+		return $parts[0].'@arcticsu.ru';
 	}
 
 	private function send_html_and_text_email($to, $from, $subject, $body) {
