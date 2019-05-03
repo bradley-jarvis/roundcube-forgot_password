@@ -7,8 +7,11 @@ if (window.rcmail) {
 }
 
 $(document).ready(function($){
-	$('input.button.mainaction').remove();
-	$('.boxcontent').append('<p><input type="button" value="Save" id="save_button" class="button mainaction"></p>')
+	$('.button.mainaction').remove();
+//samoilov 28.04.2019 changed button type and appearance
+//	$('tr.form-group.row.alternative_email').append('<p><input type="button" value="Сохранить email" id="save_button" class="button mainaction"></p>')
+//	$('.alternative_email').append('<p><button class="button mainaction submit btn btn-primary" type="button" id="save_button" value="Сохранить email">Сохранить email</button></p>')
+	$('.box').after('<p><button class="button mainaction submit btn btn-primary" type="submit" id="save_button" value="Сохранить">Сохранить</button></p>')
 
 	$('#save_button').click(function(){
 		rcmail.command('plugin.password-save-without-validation','',this);
