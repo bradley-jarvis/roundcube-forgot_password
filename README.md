@@ -27,9 +27,9 @@
 
  -----------------------------------------------------------------------
 
- Version 1.10:
+ Version 1.11:
  
- Date: 17-Dec-2018
+ Date: 04-May-2019
  
  -----------------------------------------------------------------------
 
@@ -37,7 +37,6 @@
 ##### 1.1   Installation
 ##### 2.    Notes
 ##### 3.    Compatibility
-##### 4.    Disclaimers
 
  -----------------------------------------------------------------------
 
@@ -100,10 +99,5 @@ The current author hopes to get the plugin to a more mature/releasable state but
 Feel free to fork as I did and run with it!
 
 ###### 3. Compatibility:
-The current version was tested (and is theoretically compatible with) Roundcube version 1.3.8.
+The current version was tested with Roundcube version 1.4-RC1 and password custom plugin from https://www.roundcubeforum.net/index.php?topic=24868.0
 
-###### 4. Disclaimers:
-Version 1.10 is a fork of the original, long-unmaintained version 1.0 [here](https://github.com/saas-dev/roundcube-forgot_password). 
-It is still definitely "not ready for primetime" with newer RC versions and if you use it, you do so at your own risk. 
-
-Support is not guaranteed but I may be able to provide very limited assistance.
