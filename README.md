@@ -101,3 +101,6 @@ Feel free to fork as I did and run with it!
 ###### 3. Compatibility:
 The current version was tested with Roundcube version 1.4-RC1 and password custom plugin from https://www.roundcubeforum.net/index.php?topic=24868.0
 
+###### 4. Known bugs:
+Attached images in emails are broken (added 1 blank line in the beginnig of the image file).
+
