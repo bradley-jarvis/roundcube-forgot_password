@@ -3,6 +3,7 @@ drlight17/roundcube-forgot_password
 Version 1.11
  - Added ru_RU localization files.
  - Added support for custom password plugin from  https://www.roundcubeforum.net/index.php?topic=24868.0
+ - Added $new_password check for password weakness when reset
  - Added some minor frontend fixes
 
 Version 1.10:
