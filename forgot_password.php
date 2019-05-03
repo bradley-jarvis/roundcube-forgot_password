@@ -4,11 +4,11 @@
  *
  * Plugin to reset an account password
  *
- * @version 1.2
+ * @version 1.11
  * @original_author Fabio Perrella and Thiago Coutinho (Locaweb)
  * Contributing Author: Jerry Elmore
  * Edited for own purposes by: Samoilov Yuri
- * @url https://github.com/drlight/roundcube-forgot_password
+ * @url https://github.com/drlight17/roundcube-forgot_password
  */
 class forgot_password extends rcube_plugin
 {
