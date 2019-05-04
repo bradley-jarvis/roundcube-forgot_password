@@ -27,7 +27,7 @@
 
  -----------------------------------------------------------------------
 
- Version 1.11:
+ Version 1.12:
  
  Date: 04-May-2019
  
@@ -37,7 +37,7 @@
 ##### 1.1   Installation
 ##### 2.    Notes
 ##### 3.    Compatibility
-
+##### 4.    Known bugs
  -----------------------------------------------------------------------
 
 ###### 1. Dependencies:
@@ -102,5 +102,5 @@ Feel free to fork as I did and run with it!
 The current version was tested with Roundcube version 1.4-RC1 and password custom plugin from https://www.roundcubeforum.net/index.php?topic=24868.0
 
 ###### 4. Known bugs:
-Attached images in emails are broken (added 1 blank line in the beginnig of the image file).
+none
 
