@@ -406,4 +406,3 @@ class forgot_password extends rcube_plugin
 	}
 }
 ?>
-
