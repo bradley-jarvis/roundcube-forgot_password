@@ -4,7 +4,7 @@
  *
  * Plugin to reset an account password
  *
- * @version 1.11
+ * @version 1.12
  * @original_author Fabio Perrella and Thiago Coutinho (Locaweb)
  * Contributing Author: Jerry Elmore
  * Edited for own purposes by: Samoilov Yuri
