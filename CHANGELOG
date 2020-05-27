@@ -1,4 +1,6 @@
 drlight17/roundcube-forgot_password
+Version 1.13
+ - Changed behaviour of admin alert to hardcoded OPs
 
 Version 1.12
  - Fixed image attachment bug
