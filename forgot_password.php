@@ -4,7 +4,7 @@
  *
  * Plugin to reset an account password
  *
- * @version 1.2
+ * @version 1.3
  * @original_author Fabio Perrella and Thiago Coutinho (Locaweb)
  * Contributing Author: Jerry Elmore
  * Edited for own purposes by: Samoilov Yuri
@@ -20,7 +20,8 @@ class forgot_password extends rcube_plugin
     $this->add_texts('localization/');
 
     if($rcmail->task == 'mail') {
-        $this->include_stylesheet('css/forgot_password.css');
+// samoilov 28.01.2020 commented out due to fix
+//        $this->include_stylesheet('css/forgot_password.css');
         $this->add_hook('messages_list', array($this, 'show_warning_alternative_email'));
         $this->add_hook('render_page', array($this, 'add_labels_to_mail_page'));
     }
@@ -214,7 +215,7 @@ class forgot_password extends rcube_plugin
     $user = trim(urldecode($_GET['_username']));
 
     if (strpos($user,'@')===false) {
-        $user=$user.'@arcticsu.ru';
+        $user=$user.'@ksc.ru';
     }
     if($user) {
     $sql_result = $rcmail->db->query("SELECT user_id FROM ".$rcmail->db->table_name('users', true)."WHERE  username=?", $user);
@@ -235,7 +236,7 @@ class forgot_password extends rcube_plugin
 
         }
         else {
-                                        if($this->send_email_with_token($userrec['user_id'], $userrec['alternative_email'])) {
+                                        if($this->send_email_with_token($userrec['user_id'], $userrec['alternative_email'], $user)) {
                         $message = $this->gettext('checkaccount','forgot_password');
                         $type = 'confirmation';
                       }
@@ -262,7 +263,8 @@ class forgot_password extends rcube_plugin
 
     $rcmail->output->command('display_message', $message, $type);
     $rcmail->kill_session();
-    $_POST['_user'] = $user;
+// samoilov 28.01.2020 commented out below to clear username from input field
+    //$_POST['_user'] = $user;
     $rcmail->output->send('login');
   }
 
@@ -281,6 +283,8 @@ class forgot_password extends rcube_plugin
     return $a;
   }
 
+
+  
   function add_labels_to_mail_page($a) {
 
     $rcmail = rcmail::get_instance();
@@ -300,7 +304,32 @@ class forgot_password extends rcube_plugin
      return $p;
    }
 
-        private function send_email_with_token($user_id, $alternative_email) {
+  // samoilov 27.05.2020 function to get OP admins email for requesting user
+  private function get_op_admin_emails($user) {
+
+    $rcmail = rcmail::get_instance();
+    //samoilov 27.05.2020 get OP for requesting user
+    $sql_result = $rcmail->db->query("SELECT `OP` FROM `mail`.`auth` WHERE concat(`login`,'@',`domain`) =?", $user);
+    $OP_arr = $rcmail->db->fetch_assoc($sql_result);
+    // samoilov 27.05.2020 OP is ISC or IEN or GI - under FIC protection =)
+    if ($OP_arr['OP']=='ГИ'|| $OP_arr['OP']=='ЦГП' || $OP_arr['OP']=='ЦЭС') {
+	$OP = 'ФИЦ';
+    } else {
+	$OP = $OP_arr['OP'];
+    }
+
+    //SELECT concat(`login`,'@',`domain`) FROM auth WHERE `isAdmin`='YES' AND OP='ГоИ';
+    $sql_result = $rcmail->db->query("SELECT concat(`login`,'@',`domain`) as email FROM `mail`.`auth` WHERE `isAdmin`='YES' AND `OP`=?", $OP);
+    //echo '<script>console.log("'.print_r($sql_result).'")</script>';
+    //while ($admins_arr = $rcmail->db->fetch_assoc($sql_result)) {
+//	echo '<script>console.log("'.print_r($admins_arr).'")</script>';
+//    }
+
+    return $sql_result;
+    
+  }
+
+        private function send_email_with_token($user_id, $alternative_email, $user) {
                 $rcmail = rcmail::get_instance();
                 $token = md5($alternative_email.microtime());
                 $sql = "UPDATE forgot_password " .
@@ -312,7 +341,7 @@ class forgot_password extends rcube_plugin
                 // The 'login' portion of the link is OPTIONAL and only required if that's the default login screen for your RC installation.
                 $link = "http://{$_SERVER['SERVER_NAME']}/?_task=settings&_action=plugin.new_password_form&_t=$token";
                 $body = strtr(file_get_contents($file), array('[LINK]' => $link));
-                $subject = $rcmail->gettext('email_subject','forgot_password');
+                $subject = $rcmail->gettext('email_subject','forgot_password') . " ящика ".$user;
 //              echo '<script>console.log("'.$alternative_email.'")</script>';
                 return $this->send_html_and_text_email(
                                                                                                                                                 $alternative_email,
@@ -332,19 +361,30 @@ class forgot_password extends rcube_plugin
                 $body = strtr(file_get_contents($file), array('[USER]' => $user_requesting_new_password));
                 $subject = $rcmail->gettext('admin_alert_email_subject','forgot_password');
                 //echo '<script>console.log("'.$subject.'")</script>';
+// samoilov 27.05.2020 send to all OP admins user's request 
+                $sql_result = $this->get_op_admin_emails($user_requesting_new_password);
+        //samoilov 27.05.2020 make a string of to addresses with comma
+		while ($admins = $rcmail->db->fetch_assoc($sql_result)) {
+		    $to_admins .= $admins['email'] . ',';
+		}
+		echo '<script>console.log("'.$to_admins.'")</script>';
                 return $this->send_html_and_text_email(
-                                                                                                                                                $rcmail->config->get('admin_email'),
+                                                                                                                                                //$rcmail->config->get('admin_email'),
+																		//$admins['email'],
+																		$to_admins,
                                                                                                                                                 $this->get_from_email($user_requesting_new_password),
                                                                                                                                                 $subject,
                                                                                                                                                 $body
                                                                                                                                                 );
+		//echo '<script>console.log("'.$admins['email'].'")</script>';
+                
         }
 
         private function get_from_email($email) {
                 $parts = explode('@',$email);
 //samoilov 29.04.2019 fix of 'from:' field
 //              return 'no-reply@'.$parts[1];
-                return $parts[0].'@arcticsu.ru';
+                return $parts[0].'@ksc.ru';
         }
 
         private function send_html_and_text_email($to, $from, $subject, $body) {
@@ -355,7 +395,7 @@ class forgot_password extends rcube_plugin
                 $headers .= "MIME-Version: 1.0\r\n";
                 $headers .= "Content-Type: multipart/alternative; boundary=\"=_$ctb\"\r\n";
                 $headers .= "Date: " . date('r', time()) . "\r\n";
-                $headers .= "From: $from\r\n";
+                $headers .= "From: Почтовая система КНЦ РАН <$from>\r\n";
                 $headers .= "To: $to\r\n";
                 $headers .= "Subject: $subject\r\n";
                 $headers .= "Reply-To: $from\r\n";
@@ -406,3 +446,4 @@ class forgot_password extends rcube_plugin
         }
 }
 ?>
+
