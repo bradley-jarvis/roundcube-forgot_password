@@ -6,6 +6,7 @@ $labels['passwordrecovery'] = 'Forgot Password';
 $labels['email_subject'] = 'Instructions to generate new password';
 $labels['admin_alert_email_subject'] = 'Request for password change';
 $labels['pwreminder'] = 'Password Reminder';
+$labels['forgot_passwordform'] = 'Password reset form';
 $labels['forgot_passwordenabled'] = 'Reminder enabled';
 $labels['forgot_passwordisenabled'] = 'Reminder is enabled';
 $labels['forgot_passworddisabled'] = 'Reminder is disabled';
@@ -21,6 +22,8 @@ $labels['new_password'] = 'New password';
 $labels['new_password_confirmation'] = 'Confirmation';
 $labels['no_alternative_email_warning'] = 'Enter an alternate email address.';
 $labels['click_here'] = 'Click here';
+$labels['recovery_email'] = 'Recovery Email';
+$labels['save'] = 'Save';
 
 $messages = array();
 $messages['forgot_passwordquestionempty'] = 'Please enter your Secret Question';

@@ -6,8 +6,8 @@ $labels['passwordrecovery'] = 'Forgot Password';
 $labels['email_subject'] = 'Сброс почтового пароля';
 $labels['admin_alert_email_subject'] = 'Запрос на сброс пароля';
 $labels['pwreminder'] = 'Напоминание о пароле';
-$labels['forgot_passwordenabled'] = 'Включено';
 $labels['forgot_passwordform'] = 'Форма сброса пароля.';
+$labels['forgot_passwordenabled'] = 'Включено';
 $labels['forgot_passwordisenabled'] = 'Напоминание включено';
 $labels['forgot_passworddisabled'] = 'Напоминание отключено';
 $labels['forgot_passwordaddress'] = 'Куда отправить пароль';
@@ -22,6 +22,8 @@ $labels['new_password'] = 'Новый пароль';
 $labels['new_password_confirmation'] = 'Подтверждение';
 $labels['no_alternative_email_warning'] = 'Введите дополнительный адрес электронной почты.';
 $labels['click_here'] = 'Щелкните здесь';
+$labels['recovery_email'] = 'восстановление электронной почты';
+$labels['save'] = 'Сохранить';
 
 $messages = array();
 $messages['forgot_passwordquestionempty'] = 'Введите Ваш секретный вопрос';
@@ -46,6 +48,5 @@ $messages['password_not_changed'] = 'Произошла ошибка при из
 $messages['notice_no_alternative_email_warning'] = 'У Вас не настроен дополнительный адрес электронной почты. %s и настройте!';
 $messages['alternative_email_updated'] = 'Дополнительный адрес электронной почты настроен.';
 $messages['alternative_email_invalid'] = 'Введите правильный адрес электронной почты!';
-
 ?>
 
