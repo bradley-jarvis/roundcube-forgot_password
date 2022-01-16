@@ -48,5 +48,9 @@ $messages['password_not_changed'] = 'Произошла ошибка при из
 $messages['notice_no_alternative_email_warning'] = 'У Вас не настроен дополнительный адрес электронной почты. %s и настройте!';
 $messages['alternative_email_updated'] = 'Дополнительный адрес электронной почты настроен.';
 $messages['alternative_email_invalid'] = 'Введите правильный адрес электронной почты!';
+
+$messages['email_reset'] = '<p>Здравствуйте!</p><p>Вы запросили сброс пароля.</p><p>Для выполнения перейдите по <a href="[LINK]">этой ссылке</a>.</p>--<br>С уважением, <a href="https://webmail.arcticsu.ru">ArcticSU Webmail</a>';
+$messages['email_admin'] = '<p>Здравствуйте!</p><p>Пользователь <a href=mailto:[USER]>[USER]</a> запросил(а) сброс пароля, но у него/неё не настроен дополнительный адрес электронной почты.</p><p>Пожалуйста, <a href="https://mail.arcticsu.ru">поменяйте пароль пользователю</a> и/или настройте дополнительный адрес электронной почты для него/неё.</p>--<br>С уважением, <a href="https://webmail.arcticsu.ru">ArcticSU Webmail</a>';
+
 ?>
 

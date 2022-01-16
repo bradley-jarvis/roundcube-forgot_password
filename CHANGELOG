@@ -1,3 +1,12 @@
+Version 1.14
+ - Simplified localisation
+ - Removed hardcoded language from code (still come to go)
+ - Added password reset via password plugin
+ - Added recovery email verification
+ - Fixed forgot passord recovery mechanism
+ - Re-used login page for password recovery
+ - Fixed settings>password email recovery text box to same style
+
 drlight17/roundcube-forgot_password
 Version 1.13
  - Changed behaviour of admin alert to hardcoded OPs

@@ -10,6 +10,10 @@
  * Edited for own purposes by: Samoilov Yuri
  * @url https://github.com/drlight/roundcube-forgot_password
  * Updated to work with roundcube 1.5: Bradley Jarvis
+ * - major re-write
+ * - added recovery email verification
+ * - re-use login page for entering recovery password
+ * - use password plugin for password update
  * @url https://github.com/bradley-jarvis/roundcube-forgot_password
  */
 class forgot_password extends rcube_plugin 
@@ -17,462 +21,497 @@ class forgot_password extends rcube_plugin
     public $task = 'login|logout|settings|mail';
     
     private $rc;
+    private $tag = array('new'=>'','old'=>'');
     
     function init()
     {
-        define('TOKEN_EXPIRATION_TIME_MIN',20);
-        
         $this->rc = rcmail::get_instance();
         $this->load_config();
-        
+	
+	$this->rc->db->query('CREATE TABLE'.
+		' IF NOT EXISTS '.$this->rc->db->table_name('forgot_password',true).' (' .
+		' user_id int(11) NOT NULL,' .
+		' email varchar(200) NOT NULL,' .
+		' recover varchar(256) DEFAULT NULL,' .
+		' expiration datetime DEFAULT NULL,' .
+		' validate varchar(256) DEFAULT NULL,' .
+		' PRIMARY KEY (`user_id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8');
+
         $this->add_texts('localization/');
-        
-        if ($this->rc->task == 'mail')
+
+	$this->load_config('config.inc.php');
+
+	$this->tag['old']=isset($_SESSION['forgot_password.tag'])?$_SESSION['forgot_password.tag']:'';
+	$_SESSION['forgot_password.tag']=base64_encode(random_bytes(12));
+	$this->tag['new']=$_SESSION['forgot_password.tag'];
+
+	if ($this->rc->task == 'login' || $this->rc->task == 'logout')
+	{
+            	$this->add_hook('render_page', array($this, 'login_form'));
+        	$this->add_hook('startup',array($this, 'recover'));
+
+        	$query=$this->_recover(rcube_utils::get_input_value('_token',rcube_utils::INPUT_GP));
+		if ($this->rc->action != 'forgot_password.update' || $query==null)
+	                $this->include_script('js/forgot_password.js');
+	} else
         {
-            $this->add_hook('messages_list', array($this, 'show_warning_alternative_email'));
-            $this->add_hook('render_page', array($this, 'add_labels_to_mail_page'));
-        } else
-        {
-            if ($this->rc->task == 'settings')
-            {
-                if ($this->rc->action == 'plugin.password' ||
-                    $this->rc->action == 'plugin.password-save-forgot_password')
-                {
-                    $this->add_hook('render_page', array($this, 'add_field_alternative_email_to_form'));
-                }
-                $this->register_action(
-                    'plugin.password-save-forgot_password',
-                    array($this, 'password_save'));
-            } else
-            {
-                $this->include_script('js/forgot_password.js');
-            }
-            
-            $this->add_hook('render_page', array($this, 'add_labels_to_login_page'));
-            $this->load_config('config.inc.php');
-            
-            $this->add_hook('render_page', array($this, 'add_labels_to_login_page'));
-            $this->add_hook('startup', array($this, 'forgot_password_reset'));
-            $this->register_action(
-                'plugin.forgot_password_reset',
-                array($this, 'forgot_password_redirect'));
-            
-            $this->add_hook('startup', array($this, 'new_password_form'));
-            $this->register_action(
-                'plugin.new_password_form',
-                array($this, 'new_password_form'));
-            
-            $this->add_hook('startup', array($this, 'new_password_do'));
-            $this->register_action(
-                'plugin.new_password_do',
-                array($this, 'new_password_do'));
+		$this->add_hook('logout', array($this, 'logout'));
+
+		if ($this->rc->task == 'mail')
+		{
+           		$this->add_hook('messages_list', array($this, 'show_warning_recovery_email'));
+		}
+            	else if ($this->rc->task == 'settings')
+            	{
+                	if ($this->rc->action == 'plugin.password')
+                    		$this->add_hook('render_page', array($this, 'update_form'));
+            	}
         }
+        $this->add_hook('startup',array($this, 'validate'));
+	$this->register_action('plugin.password-save-forgot_password', array($this, 'password_save'));
     }
-    
-    function add_field_alternative_email_to_form()
+
+    function logout()
     {
-        $sql_result = $this->rc->db->query(
-            'SELECT alternative_email FROM forgot_password ' .
-            ' WHERE user_id = ? ', $this->rc->user->ID);
-        $userrec = $this->rc->db->fetch_assoc($sql_result);
+	    unset($_SESSION['show_warning_recovery_email']);
+	unset($_SESSION['forgot_password.tag']);
+    }
+
+    function update_form()
+    {
+	if (!isset($this->rc->user->ID)) return;
+
+        $query = $this->rc->db->query(
+		'SELECT email FROM '.$this->rc->db->table_name('forgot_password',true) .
+		' WHERE user_id = '.$this->rc->user->ID, PDO::FETCH_ASSOC);
         $this->rc->output->add_script(
             '$(document).ready(function($){' .
             '$("#password-form table :first").prepend(\'' .
-            '<tr class="alternative_email">' .
-            '<td class="title"><label for="alternative_email">' .
+            '<tr class="form-group row">' .
+            '<td class="title col-sm-4"><label class="col-form-label" for="recovery_email">' .
             $this->gettext('recovery_email','forgot_password') .
             ':</label></td>' .
-            '<td><input type="text" autocomplete="off" size="20" id="alternative_email" ' .
-                'name="alternative_email" value="' . $userrec['alternative_email'] . '"></td>' .
+            '<td class="col-sm-8"><input class="form-control" type="text" autocomplete="off" id="recovery_email" ' .
+                'name="_recovery_email" value="' . ($query?$query->fetch()['email']:'') . '"></td>' .
             '</tr>\');' .
-            'form_action = $("#password-form").attr("action");' .
-            'form_action = form_action.replace("plugin.password-save",' .
-                '"plugin.password-save-forgot_password");' .
-            '$("#password-form").attr("action",form_action);' .
+            '$("#password-form").attr("action",$("#password-form").attr("action").replace(".password-save",".password-save-forgot_password"));' .
+	    '$("button[value=\"Save\"]").attr("onclick",$("button[value=\"Save\"]").attr("onclick").replace(".password-save",".password-save-forgot_password"));' .
+	    'rcmail.register_command(\'plugin.password-save-forgot_password\', function() {rcmail.gui_objects.passform.submit();},true);' .
             '});');
+        
         //disable password plugin's javascript validation
         $this->include_script('js/change_save_button.js');
     }
     
+    function login_form($args)
+    {
+	if ($args['template'] != "login" && $args['template'] != 'logout') return $args;
+
+	$this->rc->gettext(array(
+		'name'=>'forgot_password.href',
+		'en_us'=>'/?_task=login&_action=forgot_password.recover&_tag='.urlencode($this->tag['new']).'&_username='));
+
+	    $this->rc->output->add_label(
+		    'forgot_password.label',
+		    'forgot_password.href',
+            'forgot_password.userempty'
+	);
+        return $args;
+    }
+    
     function password_save()
     {
-        $alternative_email = rcube_utils::get_input_value(
-            'alternative_email',
-            rcube_utils::INPUT_POST);
+	// update password/recovery email from password web form
+        $query = $this->rc->db->query(
+		'SELECT username FROM '.$this->rc->db->table_name('users',true).
+		' WHERE user_id = '.$this->rc->user->ID,
+		PDO::FETCH_ASSOC)->fetch();
+	$user = $query ? $query['username'] : '';
+
+        $query = $this->rc->db->query(
+		'SELECT email FROM '.$this->rc->db->table_name('forgot_password',true).
+		' WHERE user_id = '.$this->rc->user->ID,
+		PDO::FETCH_ASSOC)->fetch();
+	$recovery = $query ? $query['email'] : '';
+	
+	$email = rcube_utils::get_input_value('_recovery_email',rcube_utils::INPUT_POST);
         
-        if (preg_match('/.+@[^.]+\..+/Umi',$alternative_email))
+	if (strcmp($email,$user)==0)
+	{
+            // don't allow an recovery email address that matches this account
+            $this->rc->output->command('display_message', 
+                strtr($this->gettext('email_match','forgot_password'),
+                array('[EMAIL]'=>$email, '[USER]'=>$user, '[ID]'=>$this->rc->user->ID)),
+                'error');
+	} else if (strcmp($email,$recovery)!=0)
+	{
+            // check that the recovery email is valid
+	    if (preg_match('/.+@[^.]+\..+/Umi',$email))
+	    {
+		    // yep! so send a validation email
+		    $this->validate();
+            } else
+            {
+		$this->rc->output->command('display_message', 
+			strtr($this->gettext('email_invalid','forgot_password'),
+			array('[EMAIL]'=>$email, '[EMAIL_OLD]'=>$recovery, '[USER]'=>$user)),
+			'error');
+	    }
+	}
+
+	/// add the forgot password js update
+        $this->update_form();
+
+	// only do password update if new or confirmation passwords are set
+	if (rcube_utils::get_input_value('_newpasswd',rcube_utils::INPUT_POST)!='' ||
+	    rcube_utils::get_input_value('_confpasswd',rcube_utils::INPUT_POST)!='')
         {
-            $this->rc->db->query(
-                "REPLACE INTO forgot_password(alternative_email, user_id) values(?,?)",
-                $alternative_email, $this->rc->user->ID);
-            
-            $message = $this->gettext('alternative_email_updated','forgot_password');
-            $this->rc->output->command('display_message', $message, 'confirmation');
+	    $this->rc->plugins->get_plugin('password')->password_save();
         } else
-        {
-            $message = $this->gettext('alternative_email_invalid','forgot_password');
-            $this->rc->output->command('display_message', $message, 'error');
-        }
-        //samoilov 02.05.2019 code below needs
-        $password_plugin = new password($this->api);
-        //if ($_REQUEST['_curpasswd'] || $_REQUEST['_newpasswd'] || $_REQUEST['_confpasswd'])
-        if ($_REQUEST['_newpasswd'] || $_REQUEST['_confpasswd'])
-        {
-            $password_plugin->password_save();
-        } else
-        {
-            //render password form
-            $password_plugin->add_texts('localization/');
-            $this->register_handler('plugin.body', array($password_plugin, 'password_form'));
+	{
+            // redraw the password form
+            $this->register_handler('plugin.body',
+                array($this->rc->plugins->get_plugin('password'), 'password_form'));
             $this->rc->overwrite_action('plugin.password');
             $this->rc->output->send('plugin');
-            //$this->rc->output->send('plugin.password');
-        }
-    }
-    
-    function show_warning_alternative_email()
-    {
-        $rcmail = rcmail::get_instance();
-        $sql_result = $this->rc->db->query('SELECT alternative_email FROM forgot_password where user_id=?',$this->rc->user->ID);
-        $userrec = $this->rc->db->fetch_assoc($sql_result);
-        
-        if (!$userrec['alternative_email'] &&
-            !isset($_SESSION['show_warning_alternative_email']))
-        {
-            // JRE - SET THIS a href TO THE URL FOR YOUR RC login screen, e.g. https://your.domain.com/login
-            $link = "<a href='/?_task=settings&_action=plugin.password'>" .
-                $this->gettext('click_here','forgot_password') ."</a>";
-            $message = sprintf($this->gettext('notice_no_alternative_email_warning','forgot_password'),$link);
-            $this->rc->output->command('display_message', $message, 'notice');
-            //samoilov 29.04.2019 comment line below to force warning of no alt email configured
-            $_SESSION['show_warning_alternative_email'] = true;
         }
     }
 
-    function new_password_do($a)
+    function show_warning_recovery_email()
     {
-        if($a['action'] != 'plugin.new_password_do' || !isset($_SESSION['temp']))
-            return $a;
+        if (isset($_SESSION['show_warning_recovery_email'])) return;
         
-        $rcmail = rcmail::get_instance();
+	$_SESSION['show_warning_recovery_email'] = true;
+        $query = $this->rc->db->query(
+		'SELECT u.username user, fp.email email, fp.validate validate' .
+		' FROM '.$this->rc->db->table_name('users',true).' u' .
+		' INNER JOIN '.$this->rc->db->table_name('forgot_password',true).' fp' .
+		' ON u.user_id = fp.user_id' .
+		' WHERE u.user_id = '.$this->rc->user->ID, PDO::FETCH_ASSOC)->fetch();
         
-        $new_password = rcube_utils::get_input_value('new_password',rcube_utils::INPUT_POST);
-        $new_password_confirmation = rcube_utils::get_input_value('new_password_confirmation',rcube_utils::INPUT_POST);
-        $token = rcube_utils::get_input_value('_t',rcube_utils::INPUT_POST);
-        // samoilov 28.04.2019 change sql query for update password
-        
-        if($new_password && $new_password == $new_password_confirmation)
-        {
-            // JRE - You will need to adjust table name to whatever table name you use for your users in roundcubedb
-            /*    $this->rc->db->query("UPDATE ".$this->rc->db->table_name('users', true).
-            " SET password=? " .
-            " WHERE user_id=(SELECT user_id FROM forgot_password WHERE token=?)",
-            array($this->rc->encrypt($new_password), $token)); */
+	if (!$query || !strlen($query['email']))
+	    // display set ercover email notice
+            $this->rc->output->command('display_message',
+            	strtr($this->gettext('recovery_email_warning','forgot_password'),
+			array("[LINK]"=>'_task=settings&_action=plugin.password')),
+		'notice');
+	else if (strlen($query['validate']))
+	    // display validate recover email notice with option to resed validation
+            $this->rc->output->command('display_message',
+            	strtr($this->gettext('validate_email_warning','forgot_password'),
+			array("[LINK]"=>'_task='.$this->rc->task.'&_action=forgot_password.validate_send&_username='.urlencode($query['user']))),
+		'notice');
 
-            // samoilov 30.04.2019 $new_password check for weakness below
-            // Validate password strength
-            $uppercase = preg_match('@[A-Z]@', $new_password);
-            $lowercase = preg_match('@[a-z]@', $new_password);
-            $number    = preg_match('@[0-9]@', $new_password);
-            $specialChars = preg_match('/[!|@|#|$|%|^|&|*|_|(|)]/', $new_password);
-            if(!$uppercase || !$lowercase || !$number || !$specialChars || 
-                strlen($new_password) < 7)
-            {
-                $message = $this->gettext('password_weakness_check_failed','forgot_password');
-                $type = 'error';
-                $this->rc->output->command('display_message', $message, $type);
-                $this->rc->output->send('forgot_password.new_password_form');
-            } else
-            {
-                $this->rc->db->query(
-                    "UPDATE `mail`.`auth` SET `passwd`=? ".
-                    " WHERE `login`=(SELECT SUBSTRING_INDEX(`username`, '@', 1)".
-                    " FROM `forgot_password` JOIN `users`".
-                    " ON (`forgot_password`.`user_id`=`users`.`user_id`)".
-                    " WHERE token=?)",
-                    array($new_password, $token));
-                
-                if($this->rc->db->affected_rows()==1)
-                {
-                    $this->rc->db->query("UPDATE forgot_password set token=null, token_expiration=null WHERE token=?",$token);
-                    $message = $this->gettext('password_changed','forgot_password');
-                    $type = 'confirmation';
-                    $this->rc->output->command('display_message', $message, $type);
-                    $this->rc->output->send('login');
-                } else
-                {
-                    $message = $this->gettext('password_not_changed','forgot_password');
-                    $type = 'error';
-                    $this->rc->output->command('display_message', $message, $type);
-                    $this->rc->output->send('login');
-                }
-            }
-            /*      $this->rc->output->command('display_message', $message, $type);
-            $this->rc->output->send('login');
-            $this->rc->output->send('forgot_password.new_password_form');*/
-        } else
-        {
-            $message = $this->gettext('password_confirmation_invalid','forgot_password');
-            $this->rc->output->command('display_message', $message, 'error');
-            $this->rc->output->send('forgot_password.new_password_form');
-        }
+	// remove recover token from forgot_password table on successful login
+        $this->rc->db->query(
+		'UPDATE '.$this->rc->db->table_name('forgot_password',true).
+		' SET recover=NULL'.
+		' WHERE user_id = '.$this->rc->user->ID
+	);
     }
 
-    function new_password_form($a)
+    function _recover($token)
     {
-        if($a['action'] != 'plugin.new_password_form' || !isset($_SESSION['temp']))
-            return $a;
-        $rcmail = rcmail::get_instance();
-        // JRE - You will need to adjust table name to whatever table name you use for your users in roundcubedb
-        $sql_result = $this->rc->db->query(
-            "SELECT * FROM ".$this->rc->db->table_name('users', true)." u " .
-            " INNER JOIN forgot_password fp ON u.user_id = fp.user_id " .
-            " WHERE fp.token=? and token_expiration >= now()",
-            rcube_utils::get_input_value('_t',rcube_utils::INPUT_GET));
-        
-        $userrec = $this->rc->db->fetch_assoc($sql_result);
-        if($userrec)
-        {
-            $this->rc->output->send("forgot_password.new_password_form");
-        } else
-        {
-            $message = $this->gettext('invalidtoken','forgot_password');
-            $type = 'error';
-            $this->rc->output->command('display_message', $message, 'error');
-            $this->rc->kill_session();
-            $this->rc->output->send('login');
-        }
+	    $query=$this->rc->db->query(
+	    'SELECT u.user_id id, u.username user, u.mail_host host, fp.email email'.
+	    ' FROM '.$this->rc->db->table_name('users',true).' u'.
+	    ' INNER JOIN '.$this->rc->db->table_name('forgot_password',true).' fp'.
+	    ' ON u.user_id = fp.user_id' .
+	    ' WHERE fp.recover = \''.$this->rc->db->escape($token).'\' and fp.expiration >= now()',
+	    PDO::FETCH_ASSOC);
+	    return $query?$query->fetch():null;
     }
-    
-    function forgot_password_reset($a)
+
+    function recover($args)
     {
-        if($a['action'] != "plugin.forgot_password_reset" || !isset($_SESSION['temp']))
-            return $a;
-                
-        // kill remember_me cookies
-        setcookie ('rememberme_user','',time()-3600);
-        setcookie ('rememberme_pass','',time()-3600);
-        
-        $rcmail = rcmail::get_instance();
-        
-        //user must be user@domain
-        //samoilov 28.04.2019 fix of domain in login and existence of user check
-        $user = trim(urldecode($_GET['_username']));
-        
-        if (strpos($user,'@')===false)
+	    $vars=array(
+		'[USER]' => rcube_utils::get_input_value('_username',rcube_utils::INPUT_GET),
+		'[ACTION]' => $args['action'],
+		'[TOKEN]' => rcube_utils::get_input_value('_token',rcube_utils::INPUT_GP),
+		'[TAG]' => rcube_utils::get_input_value('_tag',rcube_utils::INPUT_GP),
+		'[PASSWORD]' => rcube_utils::get_input_value('_pass',rcube_utils::INPUT_GP),
+		'[STAG]' => $this->tag['old']
+	    );
+
+	if ($vars['[ACTION]'] == "forgot_password.recover")
         {
-            $user=$user.'@ksc.ru';
-        }
-        if ($user)
+        if ($vars['[USER]'])
         {
-            $sql_result = $this->rc->db->query("SELECT user_id FROM ".$this->rc->db->table_name('users', true)."WHERE  username=?", $user);
-            $userrec = $this->rc->db->fetch_assoc($sql_result);
-            if ($userrec['user_id']!='')
-            {
-                //    echo '<script>console.log("'.$userrec['user_id'].'")</script>';
-                      // JRE - You will need to adjust table name to whatever table name you use for your users in roundcubedb
-                $sql_result = $this->rc->db->query(
-                    "SELECT u.user_id, fp.alternative_email, fp.token_expiration, fp.token_expiration < now() as token_expired " .
-                    " FROM ".$this->rc->db->table_name('users', true)." u " .
-                    " INNER JOIN forgot_password fp on u.user_id = fp.user_id " .
-                    " WHERE  u.username=?", $user);
-                $userrec = $this->rc->db->fetch_assoc($sql_result);
-                
-                if (is_array($userrec) && $userrec['alternative_email'])
+		    if (strcmp($vars['[STAG]'], $vars['[TAG]']))
+		    {
+			    $message = strtr('Invalid tag for email recovery {ID:[TAG]-[STAG]}',$vars);
+				    ;//$this->gettext('sendingfailed','forgot_password');
+			    $type = 'error';
+		    } else
+		    {
+
+			    $vars['[EMAIL]']=strtr($this->rc->config->get('smtp_user'),
+				    array(
+					    '%u'=>$vars['[USER]'],
+					    '%n'=>$_SERVER["HTTP_HOST"],
+				    '%t'=>explode('.',$_SERVER["HTTP_HOST"],2)[1]));
+                $record = $this->rc->db->query(
+                    'SELECT u.user_id id, fp.email email, fp.recover, fp.expiration < now() as expired' .
+                    ' FROM '.$this->rc->db->table_name('users', true).' u '.
+                    ' INNER JOIN '.$this->rc->db->table_name('forgot_password',true).' fp on u.user_id = fp.user_id ' .
+		    ' WHERE  u.username = \''.$this->rc->db->escape($vars['[EMAIL]']).'\'',
+		    PDO::FETCH_ASSOC);
+		$record=$record?$record->fetch():null;
+		$vars['[RECOVERY]']=is_array($record)?$record['email']:null;
+
+		if ($vars['[RECOVERY]'] && !$this->_send_email($vars['[EMAIL]'], $vars['[RECOVERY]']))
                 {
-                    if($userrec['token_expiration'] && !$userrec['token_expired'])
-                    {
-                        $message = $this->gettext('checkaccount','forgot_password');
-                        $type = 'confirmation';
-                    } else
-                    {
-                        if ($this->send_email_with_token($userrec['user_id'], $userrec['alternative_email'], $user))
-                        {
-                            $message = $this->gettext('checkaccount','forgot_password');
-                            $type = 'confirmation';
-                        } else
-                        {
-                            $message = $this->gettext('sendingfailed','forgot_password');
+                            $message = strtr($this->gettext('sendingfailed','forgot_password'),$vars);
                             $type = 'error';
-                        }
-                    }
-                } else
-                {
-                    $this->send_alert_to_admin($user);
-                    $message = $this->gettext('senttoadmin','forgot_password');
-                    $type = 'notice';
-                }
             } else
             {
-                $message = $this->gettext('forgot_passwordusernotfound','forgot_password');
-                $type = 'error';
-            }
+		$message = strtr($this->gettext('checkaccount','forgot_password'),$vars);
+		//$message = strtr('Send password recovery to [USER]:[EMAIL]',$vars);
+                $type = 'confirmation';
+	    }
+		    }
         } else
         {
-            $message = $this->gettext('forgot_passworduserempty','forgot_password');
+	    $message = strtr($this->gettext('userempty','forgot_password'),$vars);
             $type = 'error';
-        }
-        $this->rc->output->command('display_message', $message, $type);
-        $this->rc->kill_session();
-        // samoilov 28.01.2020 commented out below to clear username from input field
-        //$_POST['_user'] = $user;
-        $this->rc->output->send('login');
-    }
-    
-    function add_labels_to_login_page($a)
-    {
-        if($a['template'] != "login")
-            return $a;
+	}
+
+	$this->rc->output->command('display_message', strtr($message, $vars), $type);
+        //$this->rc->kill_session();
+	$this->rc->output->send('login');
+	} else if ($vars['[ACTION]'] == "forgot_password.update")
+	{
+
+	        $query=$this->_recover($vars['[TOKEN]']);
+
+		if ($query)
+		{
+		$alphabet=join('',range('A','Z'));
+		$vars['[ID]']=$query['id'];
+		$vars['[USER]']=$query['user'];
+		$vars['[EMAIL]']=$query['email'];
+		$vars['[HOST]']=$query['host'];
+
+		unset($message);
+		$type = null;
+		
+		// check if new password has been submitted and tags match
+		if (!strcmp(strtr($vars['[TAG]'],$alphabet.strtolower($alphabet),strtolower($alphabet).$alphabet),$vars['[STAG]']) && 
+			strlen($vars['[PASSWORD]'])>0)
+		{
+			// pass new password onto password plugin for validation/update
+			$plugin = $this->rc->plugins->get_plugin('password');
+			if (strlen($vasr['[USER]'])<=0)
+			{
+				$message = 'Cannot find recovery user';
+			} if ($plugin)
+			{
+				// attempt to update password
+				$message = $plugin->save(null, $vars['[PASSWORD]'], $vars['[USER]'], $vars['[HOST]']);
+			} else
+			{
+				$message = 'Unable to recover password because password plugin is not installed';
+			}
+			if (!$message)
+			{
+				$message = 'Successfully recovered password';
+				$type = 'confirmation';
+				$query = null;
+			}
+		} else
+		{
+			$message = 'Enter new password ([PASSWORD],[TAG],[STAG])';
+			$type = 'notice';
+		}
         
-        $rcmail = rcmail::get_instance();
-        $this->rc->output->add_label(
-            'forgot_password.forgotpassword',
-            'forgot_password.forgot_passworduserempty',
-            'forgot_password.forgot_passwordusernotfound'
-        );
-        return $a;
-    }
-    
-    function add_labels_to_mail_page($a)
-    {
-        $rcmail = rcmail::get_instance();
-        $this->rc->output->add_label('forgot_password.no_alternative_email_warning');
-        $this->rc->output->add_script('rcmail.message_time = 10000;');
-        return $a;
-    }
-    
-    function html($p)
-    {
-        $rcmail = rcmail::get_instance();
-        $content = "<h1>" . taskbar . "</h1>";
-        $this->rc->output->add_footer($content);
-        return $p;
-    }
-    
-    // samoilov 27.05.2020 function to get OP admins email for requesting user
-    private function get_op_admin_emails($user)
-    {
-        $rcmail = rcmail::get_instance();
-        //samoilov 27.05.2020 get OP for requesting user
-        $sql_result = $this->rc->db->query(
-            "SELECT `OP` FROM `mail`.`auth`".
-            " WHERE concat(`login`,'@',`domain`) =?", $user);
-        $OP_arr = $this->rc->db->fetch_assoc($sql_result);
-        // samoilov 27.05.2020 OP is ISC or IEN or GI - under FIC protection =)
-        if ($OP_arr['OP']=='ГИ'|| $OP_arr['OP']=='ЦГП' || $OP_arr['OP']=='ЦЭС')
-        {
-            $OP = 'ФИЦ';
+		// update login page to recover password
+		if ($query)
+		{
+			$tag = strtr($this->tag['new'],$alphabet.strtolower($alphabet),strtolower($alphabet).$alphabet);
+	        $this->rc->output->add_script(
+			'$(document).ready(function($){' .
+				'var clone=$("#login-form").find("input").first();' .
+				'clone.attr("name","_tag");' .
+				'clone.attr("value","'.$tag.'");' .
+				'clone.prependTo("#login-form");' .
+				'clone=clone.clone();' .
+				'clone.attr("name","_token");' .
+				'clone.attr("value","'.$vars['[TOKEN]'].'");' .
+				'clone.prependTo("#login-form");' .
+				'$("head > title").html("Roundcube Webmail :: Recover Password");' .
+				'$("#login-form").find("tr").first().remove();' .
+				'$("#login-form [name=\"_action\"").val("forgot_password.update");' .
+				'$("#rcmloginsubmit").html("Recover Password");' .
+				'$("#rcmloginsubmit").attr("id","rcmrecoverpassword");' .
+				'})');
+		}
+
+		if ($message)
+		$this->rc->output->command('display_message', strtr($message, $vars), $type?$type:'error');
         } else
         {
-            $OP = $OP_arr['OP'];
-        }
-
-        //SELECT concat(`login`,'@',`domain`) FROM auth WHERE `isAdmin`='YES' AND OP='ГоИ';
-        $sql_result = $this->rc->db->query(
-            "SELECT concat(`login`,'@',`domain`) as email".
-            " FROM `mail`.`auth`".
-            " WHERE `isAdmin`='YES' AND `OP`=?", $OP);
-            //echo '<script>console.log("'.print_r($sql_result).'")</script>';
-            //while ($admins_arr = $this->rc->db->fetch_assoc($sql_result)) {
-            //  echo '<script>console.log("'.print_r($admins_arr).'")</script>';
-            //    }
-        return $sql_result;
+            $this->rc->output->command('display_message',strtr($this->gettext('invalidtoken','forgot_password'),$vars),'error');
+            $this->rc->kill_session();
+	}
+	$this->rc->output->send('login');
+	}
+	return $args;
     }
     
-    private function send_email_with_token($user_id, $alternative_email, $user)
+    function validate($args)
     {
-        $rcmail = rcmail::get_instance();
-        $token = md5($alternative_email.microtime());
-        $sql = "UPDATE forgot_password " .
-            " SET token='$token', token_expiration=now() + INTERVAL " . TOKEN_EXPIRATION_TIME_MIN . " MINUTE" .
-            " WHERE user_id=$user_id";
-        $this->rc->db->query($sql);
-        
-        $file = dirname(__FILE__)."/localization/{$this->rc->user->language}/reset_pw_body.html";
-        // The 'login' portion of the link is OPTIONAL and only required if that's the default login screen for your RC installation.
-        $link = "http://{$_SERVER['SERVER_NAME']}/?_task=settings&_action=plugin.new_password_form&_t=$token";
-        $body = strtr(file_get_contents($file), array('[LINK]' => $link));
-        $subject = $this->rc->gettext('email_subject','forgot_password') . " ящика ".$user;
-        //              echo '<script>console.log("'.$alternative_email.'")</script>';
-        return $this->send_html_and_text_email(
-            $alternative_email,
-            //$this->get_from_email($alternative_email),
-            //$this->get_from_email($this->rc->config->get('admin_email')),
-            $this->get_from_email($this->rc->config->get('default_smtp_user')),
-            $subject,
-            $body);
+	$vars=array(
+		'[USER]' => rcube_utils::get_input_value('_username',rcube_utils::INPUT_GET),
+		'[ID]' => $this->rc->user->ID,
+		'[ACTION]' => rcube_utils::get_input_value('_action',rcube_utils::INPUT_GET),
+	);
+	if ($vars['[ACTION]']=='forgot_password.validate_send')
+	{
+
+		$record = $this->rc->db->query($vars['[SQL]']='SELECT'.
+	    		' u.username user, fp.email email'.
+	    		' FROM '.$this->rc->db->table_name('users',true).' u'.
+	    		' INNER JOIN '.$this->rc->db->table_name('forgot_password',true).' fp'.
+	    		' ON u.user_id = fp.user_id'.
+			' WHERE u.username = \''.$this->rc->db->escape($vars['[USER]']).'\'',
+			PDO::FETCH_ASSOC);
+		$record=$record?$record->fetch():null;
+	    	if ($record && strlen($record['user'])>0)
+	    	{
+		    	$vars['[USER]'] = $record['user'];
+		    	$vars['[EMAIL]'] = $record['email'];
+
+	    		$this->_send_email($record['user'], $record['email'], random_bytes(128));
+
+			$this->rc->output->command('display_message', 
+				strtr($this->gettext('email_update','forgot_password'), $vars),
+				'confirmation');
+	 	} else
+	    	{
+			$this->rc->output->command('display_message', 
+				strtr('Problem getting validation data for user {[ACTION]} ([ID]) - "[SQL]"', $vars),
+				'error');
+	    	}
+	} else if ($vars['[ACTION]']=='forgot_password.validate_check')
+	{
+		$action = rcube_utils::get_input_value('_action',rcube_utils::INPUT_GET);
+		$token = rcube_utils::get_input_value('_token',rcube_utils::INPUT_GET);
+
+	$query = $this->rc->db->query('SELECT u.user_id id, u.username user, fp.email email'.
+		' FROM '.$this->rc->db->table_name('users',true).' u'.
+		' INNER JOIN '.$this->rc->db->table_name('forgot_password',true).' fp'.
+		' ON u.user_id = fp.user_id'.
+		' WHERE fp.validate=\''.$this->rc->db->escape($token).'\'',
+		PDO::FETCH_ASSOC)->fetch();
+	
+	$query = $query ? $query : array('user'=>'', 'email'=>'');
+	$vars = array(
+		'[ACTION]'=>$action,
+		'[TOKEN]'=>$token,
+		'[EMAIL]'=>$query['email'],
+		'[ID]'=>$query['id'],
+		'[USER]'=>$query['user']);
+
+	if ($query['email'])
+	{
+		$this->rc->db->query('UPDATE '.$this->rc->db->table_name('forgot_password',true).
+			' SET validate=NULL'.
+			' WHERE user_id = '.$vars['[ID]']);
+		$this->rc->output->command('display_message', 
+			//strtr($this->gettext('email_invalid','forgot_password'),
+			strtr("Recovery email [EMAIL] validated for [USER]", $vars), 'confirmation');
+	} else
+	{
+		$this->rc->output->command('display_message', 
+			//strtr($this->gettext('email_invalid','forgot_password'),
+			strtr("Invalid recovery token", $vars), 'error');
+	}
+	}
+	return $args;
     }
     
-    private function send_alert_to_admin($user_requesting_new_password)
+    private function _send_email($user, $to = '', $token = '')
     {
-        $rcmail = rcmail::get_instance();
-        //samoilov 28.04.2019 fix of admin alert body
-        //$file = dirname(__FILE__)."/localization/{$this->rc->user->language}/reset_pw_body.html";
-        $file = dirname(__FILE__)."/localization/{$this->rc->user->language}/alert_for_admin_to_reset_pw.html";
-        $body = strtr(file_get_contents($file), array('[USER]' => $user_requesting_new_password));
-        $subject = $this->rc->gettext('admin_alert_email_subject','forgot_password');
-        //echo '<script>console.log("'.$subject.'")</script>';
-        // samoilov 27.05.2020 send to all OP admins user's request 
-        $sql_result = $this->get_op_admin_emails($user_requesting_new_password);
-        //samoilov 27.05.2020 make a string of to addresses with comma
-        while ($admins = $this->rc->db->fetch_assoc($sql_result))
-        {
-            $to_admins .= $admins['email'] . ',';
-        }
-        echo '<script>console.log("'.$to_admins.'")</script>';
-        return $this->send_html_and_text_email(
-            //$this->rc->config->get('admin_email'),
-            //$admins['email'],
-            $to_admins,
-            $this->get_from_email($user_requesting_new_password),
-            $subject,
-            $body);
-            //echo '<script>console.log("'.$admins['email'].'")</script>';
-    }
+	$admin = '';
+	$subject = '';
+	$link = '';
+	
+        if ($to == '')
+	{
+	    // no alternative email address
+	    return false;
+	    $subject = 'admin';
+	} if ($token != '')
+	    {
+		$subject = 'validate';
+		$token = base64_encode($token);
+                $link = "_action=forgot_password.validate_check&_token=".urlencode($token);
+		
+                $this->rc->db->query(
+			'INSERT INTO '.$this->rc->db->table_name('forgot_password',true).' (user_id, email, recover, validate)'.
+			' SELECT fp.user_id,\''.$this->rc->db->escape($to).'\',\'\',\''.$this->rc->db->escape($token).'\''.
+			' FROM '.$this->rc->db->table_name('users',true).' u'.
+			' INNER JOIN '.$this->rc->db->table_name('forgot_password',true).' fp'.
+			' ON u.user_id = fp.user_id'.
+			' WHERE u.username = \''.$this->rc->db->escape($user).'\''.
+			' ON DUPLICATE KEY UPDATE'.
+			' email = \''.$this->rc->db->escape($to).'\','.
+			' recover = \'\','.
+			' validate = \''.$this->rc->db->escape($token).'\''
+		);
+	    } else
+	    {
+		$subject = 'recover';
+		$token = base64_encode(random_bytes(128));
+		$link = "_task=login&_action=forgot_password.update&_token=".urlencode($token);
+		$this->rc->db->query(
+			'INSERT INTO '.$this->rc->db->table_name('forgot_password',true).' (user_id, email, recover, expiration)'.
+			' SELECT fp.user_id, \''.$this->rc->db->escape($to).'\', \''.$this->rc->db->escape($token).'\','.
+			' now() + INTERVAL '.$this->rc->config->get('default_token_expire').' MINUTE'.
+			' FROM '.$this->rc->db->table_name('users',true).' u'.
+			' INNER JOIN '.$this->rc->db->table_name('forgot_password',true).' fp'.
+			' ON u.user_id = fp.user_id'.
+			' WHERE u.username = \''.$this->rc->db->escape($user).'\''.
+			' ON DUPLICATE KEY UPDATE'.
+			' email = \''.$this->rc->db->escape($to).'\','.
+			' recover = \''.$this->rc->db->escape($token).'\','.
+			' expiration = now() + INTERVAL '.$this->rc->config->get('default_token_expire').' MINUTE');
+	}
 
-    private function get_from_email($email)
-    {
-        $parts = explode('@',$email);
-        //samoilov 29.04.2019 fix of 'from:' field
-        //return 'no-reply@'.$parts[1];
-        return $parts[0].'@ksc.ru';
-    }
-    
-    private function send_html_and_text_email($to, $from, $subject, $body)
-    {
-        $rcmail = rcmail::get_instance();
+	$vars = array(
+        	'[LINK]' => "http://{$_SERVER['SERVER_NAME']}/?$link",
+		'[USER]' => $user,
+		'[DATE]' => date('r',time()),
+		'[FROM]' => $this->rc->config->get('admin_email'),
+		'[TO]' => $to,
+		'[BOUNDARY]' => '_'.md5(rand() . microtime()));
+	$vars['[SUBJECT]'] = strtr($this->rc->gettext('subject_'.$subject,'forgot_password'),$vars);
+	$vars['[BODY]'] = str_replace('=','=3D',strtr($this->rc->gettext('email_'.$subject,'forgot_password'), $vars));
+	$vars['[HTML]'] = rcube_mime::wordwrap(
+			(new rcube_html2text($vars['[BODY]'], false, true, 0))->get_text(),
+			$this->rc->config->get('line_length', 75),
+			"\r\n").
 
-        $ctb = md5(rand() . microtime());
-        $headers  = "Return-Path: $from\r\n";
-        $headers .= "MIME-Version: 1.0\r\n";
-        $headers .= "Content-Type: multipart/alternative; boundary=\"=_$ctb\"\r\n";
-        $headers .= "Date: " . date('r', time()) . "\r\n";
-        $headers .= "From: Почтовая система КНЦ РАН <$from>\r\n";
-        $headers .= "To: $to\r\n";
-        $headers .= "Subject: $subject\r\n";
-        $headers .= "Reply-To: $from\r\n";
+	
+        $headers  = strtr("Return-Path: [FROM]\r\n".
+            	"MIME-Version: 1.0\r\n".
+        	"Content-Type: multipart/alternative; boundary=\"[BOUNDARY]\"\r\n".
+        	"Date: [DATE]\r\n".
+        	"From: [FROM]\r\n".
+        	"To: [TO]\r\n".
+        	"Subject: [SUBJECT]\r\n".
+        	"Reply-To: [FROM]\r\n", $vars);
 
-        $msg_body .= "Content-Type: multipart/alternative; boundary=\"=_$ctb\"\r\n\r\n";
-
-        $txt_body  = "--=_$ctb";
-        $txt_body .= "\r\n";
-        $txt_body .= "Content-Transfer-Encoding: 7bit\r\n";
-        $txt_body .= "Content-Type: text/plain; charset=" . 'RCMAIL_CHARSET' . "\r\n";
-        $LINE_LENGTH = $this->rc->config->get('line_length', 75);
-        $h2t = new rcube_html2text($body, false, true, 0);
-        $txt = rcube_mime::wordwrap($h2t->get_text(), $LINE_LENGTH, "\r\n");
-        $txt = wordwrap($txt, 998, "\r\n", true);
-        $txt_body .= "$txt\r\n";
-        $txt_body .= "--=_$ctb";
-        $txt_body .= "\r\n";
-        
-        $msg_body .= $txt_body;
-        $msg_body .= "Content-Transfer-Encoding: quoted-printable\r\n";
-        $msg_body .= "Content-Type: text/html; charset=" . 'RCMAIL_CHARSET' . "\r\n\r\n";
-        $msg_body .= str_replace("=","=3D",$body);
-        $msg_body .= "\r\n\r\n";
-        $msg_body .= "--=_$ctb--";
-        $msg_body .= "\r\n\r\n";
+        $msg_body = strtr("Content-Type: multipart/alternative; boundary=\"[BOUNDARY]\"\r\n\r\n".
+		"--[BOUNDARY]\r\n".
+        	"Content-Transfer-Encoding: 7bit\r\n".
+        	"Content-Type: text/plain; charset=RCMAIL_CHARSET\r\n".
+		"[HTML]\r\n".
+        	"--[BOUNDARY]\r\n".
+        	"Content-Transfer-Encoding: quoted-printable\r\n".
+        	"Content-Type: text/html; charset=RCMAIL_CHARSET\r\n\r\n".
+		"[BODY]\r\n\r\n".
+		"--[BOUNDARY]--\r\n\r\n", $vars);
         
         // send message
         if (!is_object($this->rc->smtp))
@@ -488,7 +527,7 @@ class forgot_password extends rcube_plugin
         }
         
         $this->rc->smtp->connect();
-        if ($this->rc->smtp->send_mail($from, $to, $headers, $msg_body))
+        if ($this->rc->smtp->send_mail($vars['[FROM]'], $vars['[TO]'], $headers, $msg_body))
         {
             return true;
         } else

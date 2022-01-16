@@ -48,4 +48,7 @@ $messages['notice_no_alternative_email_warning'] = 'Você não possui um email a
 $messages['alternative_email_updated'] = 'Seu email alternativo foi alterado.';
 $messages['alternative_email_invalid'] = 'Informe um email alternativo válido.';
 
+$messages['email_user'] = 'Para gerar uma nova senha, acesse <a href="[LINK]">este link</a>';
+$messages['email_admin'] = '<p>O usuário [USER] solicitou uma alteração de senha mas este não possui um email alternativo cadastrado.</p><p>Favor realizar a troca de senha ou cadastrar um email alternativo para este usuário.</p>';
+
 ?>
