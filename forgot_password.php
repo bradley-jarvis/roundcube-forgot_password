@@ -84,6 +84,7 @@ class forgot_password extends rcube_plugin
         $query = $this->rc->db->query(
 		'SELECT email FROM '.$this->rc->db->table_name('forgot_password',true) .
 		' WHERE user_id = '.$this->rc->user->ID, PDO::FETCH_ASSOC);
+				$query = is_bool($query)?null:$query->fetch();
         $this->rc->output->add_script(
             '$(document).ready(function($){' .
             '$("#password-form table :first").prepend(\'' .
@@ -92,7 +93,7 @@ class forgot_password extends rcube_plugin
             $this->gettext('recovery_email','forgot_password') .
             ':</label></td>' .
             '<td class="col-sm-8"><input class="form-control" type="text" autocomplete="off" id="recovery_email" ' .
-                'name="_recovery_email" value="' . ($query?$query->fetch()['email']:'') . '"></td>' .
+                'name="_recovery_email" value="' . (is_array($query)?$query['email']:'') . '"></td>' .
             '</tr>\');' .
             '$("#password-form").attr("action",$("#password-form").attr("action").replace(".password-save",".password-save-forgot_password"));' .
 	    '$("button[value=\"Save\"]").attr("onclick",$("button[value=\"Save\"]").attr("onclick").replace(".password-save",".password-save-forgot_password"));' .
@@ -188,8 +189,8 @@ class forgot_password extends rcube_plugin
 		' INNER JOIN '.$this->rc->db->table_name('forgot_password',true).' fp' .
 		' ON u.user_id = fp.user_id' .
 		' WHERE u.user_id = '.$this->rc->user->ID, PDO::FETCH_ASSOC)->fetch();
-        
-	if (!$query || !strlen($query['email']))
+  
+	if (!is_array($query) || strlen($query['email'])<0)
 	    // display set ercover email notice
             $this->rc->output->command('display_message',
             	strtr($this->gettext('recovery_email_warning','forgot_password'),
@@ -259,7 +260,7 @@ class forgot_password extends rcube_plugin
 		$record=$record?$record->fetch():null;
 		$vars['[RECOVERY]']=is_array($record)?$record['email']:null;
 
-		if ($vars['[RECOVERY]'] && !$this->_send_email($vars['[EMAIL]'], $vars['[RECOVERY]']))
+		if ($vars['[RECOVERY]'] && ($rv=$this->_send_email($vars['[EMAIL]'], $vars['[RECOVERY]']))!=null)
                 {
                             $message = strtr($this->gettext('sendingfailed','forgot_password'),$vars);
                             $type = 'error';
@@ -358,40 +359,70 @@ class forgot_password extends rcube_plugin
 	return $args;
     }
     
-    function validate($args)
+		function validate($args=null)
     {
 	$vars=array(
-		'[USER]' => rcube_utils::get_input_value('_username',rcube_utils::INPUT_GET),
+		'[USER]' => rcube_utils::get_input_value('_username',rcube_utils::INPUT_GP),
+		'[EMAIL]' => rcube_utils::get_input_value('_recovery_email',rcube_utils::INPUT_GP),
 		'[ID]' => $this->rc->user->ID,
-		'[ACTION]' => rcube_utils::get_input_value('_action',rcube_utils::INPUT_GET),
+		'[ACTION]' => rcube_utils::get_input_value('_action',rcube_utils::INPUT_GP),
 	);
-	if ($vars['[ACTION]']=='forgot_password.validate_send')
+	if ($vars['[ACTION]']=='forgot_password.validate_send' ||
+		$vars['[ACTION]']=='plugin.password-save-forgot_password')
 	{
+		#$vars['[USER]']=explode('@',$this->rc->get_user_name())[0];
+		$vars['[USER]']=$this->rc->get_user_name();
+		#if (strpos($vars['[USER]'],'@')<0)
+	#	{
+	#		   $vars['[USER]']=strtr($this->rc->config->get('smtp_user'),
+	#			    array(
+	#				    '%u'=>$vars['[USER]'],
+	#				    '%n'=>$_SERVER["HTTP_HOST"],
+	#			    '%t'=>explode('.',$_SERVER["HTTP_HOST"],2)[1]));
+	#	}
+                $record = $this->rc->db->query(
+                    'SELECT fp.email email' .
+                    ' FROM '.$this->rc->db->table_name('users', true).' u '.
+                    ' INNER JOIN '.$this->rc->db->table_name('forgot_password',true).' fp on u.user_id = fp.user_id ' .
+		    ' WHERE  u.username = \''.$this->rc->db->escape($vars['[USER]']).'\'',
+				PDO::FETCH_ASSOC);
 
-		$record = $this->rc->db->query($vars['[SQL]']='SELECT'.
-	    		' u.username user, fp.email email'.
-	    		' FROM '.$this->rc->db->table_name('users',true).' u'.
-	    		' INNER JOIN '.$this->rc->db->table_name('forgot_password',true).' fp'.
-	    		' ON u.user_id = fp.user_id'.
-			' WHERE u.username = \''.$this->rc->db->escape($vars['[USER]']).'\'',
-			PDO::FETCH_ASSOC);
-		$record=$record?$record->fetch():null;
-	    	if ($record && strlen($record['user'])>0)
-	    	{
-		    	$vars['[USER]'] = $record['user'];
-		    	$vars['[EMAIL]'] = $record['email'];
+			$vars['[EMAIL_OLD]']=is_bool($record)?null:$record->fetch()['email'];
 
-	    		$this->_send_email($record['user'], $record['email'], random_bytes(128));
+		#if (is_array($record))
+		#{
+		#$record=$record?$record->fetch():null;
+		#} else
+		#{
+		#	$record['user']=$vars['[USER]'];
+		#	$record['email']=rcube_utils::get_input_value('_recovery_email',rcube_utils::INPUT_GP),
+		#}
+	    	#if ($record && strlen($record['user'])>0)
+				{
+		    	#$vars['[USER]'] = $record['user'];
+		    	#$vars['[EMAIL]'] = $record['email'];
 
-			$this->rc->output->command('display_message', 
-				strtr($this->gettext('email_update','forgot_password'), $vars),
-				'confirmation');
-	 	} else
-	    	{
-			$this->rc->output->command('display_message', 
-				strtr('Problem getting validation data for user {[ACTION]} ([ID]) - "[SQL]"', $vars),
-				'error');
-	    	}
+	    		$rv = $this->_send_email($vars['[USER]'], $vars['[EMAIL]'], random_bytes(128));
+					
+					$type = 'confirmation';
+					
+					if ($rv != null)
+					{
+									$vars['[ERROR]'] = $rv['error'];
+									$vars['[RESPONSE]'] = $rv['response'];
+									
+									$type = 'error';
+									$message = 'There was a problem sending verify email, [RESPONSE] - [ERROR]';
+					} else
+											#$this->gettext('email_update','forgot_password'), 
+									$message = 'update email recovery for [USER] from [EMAIL_OLD] to [EMAIL]'; 
+			$this->rc->output->command('display_message',strtr($message, $vars), $type);
+	 	}# else
+	   # 	{
+		#	$this->rc->output->command('display_message', 
+	#			strtr('Problem getting validation data for user {[ACTION]} ([ID]) - "[SQL]"', $vars),
+		#		'error');
+	  #  	}
 	} else if ($vars['[ACTION]']=='forgot_password.validate_check')
 	{
 		$action = rcube_utils::get_input_value('_action',rcube_utils::INPUT_GET);
@@ -424,7 +455,7 @@ class forgot_password extends rcube_plugin
 	{
 		$this->rc->output->command('display_message', 
 			//strtr($this->gettext('email_invalid','forgot_password'),
-			strtr("Invalid recovery token", $vars), 'error');
+						strtr("Invalid recovery token", $vars), 'error');
 	}
 	}
 	return $args;
@@ -449,9 +480,9 @@ class forgot_password extends rcube_plugin
 		
                 $this->rc->db->query(
 			'INSERT INTO '.$this->rc->db->table_name('forgot_password',true).' (user_id, email, recover, validate)'.
-			' SELECT fp.user_id,\''.$this->rc->db->escape($to).'\',\'\',\''.$this->rc->db->escape($token).'\''.
+			' SELECT u.user_id,\''.$this->rc->db->escape($to).'\',\'\',\''.$this->rc->db->escape($token).'\''.
 			' FROM '.$this->rc->db->table_name('users',true).' u'.
-			' INNER JOIN '.$this->rc->db->table_name('forgot_password',true).' fp'.
+			' LEFT JOIN '.$this->rc->db->table_name('forgot_password',true).' fp'.
 			' ON u.user_id = fp.user_id'.
 			' WHERE u.username = \''.$this->rc->db->escape($user).'\''.
 			' ON DUPLICATE KEY UPDATE'.
@@ -529,12 +560,15 @@ class forgot_password extends rcube_plugin
         $this->rc->smtp->connect();
         if ($this->rc->smtp->send_mail($vars['[FROM]'], $vars['[TO]'], $headers, $msg_body))
         {
-            return true;
+            return null;
         } else
         {
             rcube::write_log('errors','response:' . print_r($this->rc->smtp->get_response(),true));
             rcube::write_log('errors','errors:' . print_r($this->rc->smtp->get_error(),true));
-            return false;
+	    return [
+		    'response'=>implode(',',$this->rc->smtp->get_response()),
+		'error'=>implode(',',$this->rc->smtp->get_error())
+	    ];
         }
     }
 }
